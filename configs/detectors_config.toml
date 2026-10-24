@@ -515,3 +515,17 @@ max_duration = 0.5
 score = { component = "eye_closure_score", algorithm = "eye_closure_score_ear", npz_key = "score" }
 eye_landmarks_2d = { component = "eye_closure_score", algorithm = "eye_closure_score_ear", npz_key = "eye_landmarks_2d" }
 
+# ======================================================================
+#                      Hand Closure Detection (2D)
+# ======================================================================
+
+# detects closed hands (fists) from 2d hand keypoints
+[algorithms.hand_closure]
+algorithm_type = "hand_closure"
+camera_names = ["view_left", "view_right"]
+visualize = true
+threshold = 1.2         # max finger extension ratio for a fist (open hand ~1.7-2.0, fist ~1.0); tune on annotated data
+min_confidence = 0.3    # hand keypoints below this confidence count as missing
+min_duration = 0.5      # seconds a fist must be held to count (0 = keep every frame)
+[algorithms.hand_closure.inputs]
+hand_joints_2d = { component = "hand_joints", algorithm = "rtmpose_l_wholebody", npz_key = "2d" }
