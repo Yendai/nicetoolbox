@@ -36,6 +36,7 @@ Per component, each `<algorithm>.npz` file contains several numpy arrays plus a 
 | emotion_individual | faceboxes, aus, emotions, poses |
 | eye_closure_score | score |
 | eye_closed_state | per_camera_state, global_state |
+| hand_closure | extension_ratio, fist_state |
 
 All these numpy arrays share a common structure: the first 3 dimensions contain the subjects, cameras, and frames, the remaining dimensions vary with the respective entity.
 
@@ -263,6 +264,14 @@ Monitors eye blink and closure dynamics. This is split into two components:
 ### Eye Aspect Ratio (EAR)
 Calculated by comparing the vertical distance between the eyelid keypoints to their horizontal distance. A lower value indicates a more closed eye.  
 [Soukupová and Čech, 2016](https://vision.fe.uni-lj.si/cvww2016/proceedings/papers/05.pdf)
+
+## Hand Closure
+
+Detects closed hands (fists) from 2D hand keypoints, such as those produced by `rtmpose_l_wholebody`. The **hand_closure** component stores two arrays under `<output_folder>/hand_closure/<algorithm_name>.npz`, each with `"left_hand"` and `"right_hand"` columns per subject, camera and frame:
+- **`extension_ratio`**: For the index, middle, ring and little fingers, the distance from fingertip to wrist divided by the distance from knuckle to wrist, averaged over the fingers. An open hand gives roughly 1.7 to 2.0, a fist about 1.0. The ratio does not depend on the subject's distance to the camera. The thumb is not used.
+- **`fist_state`**: 1 where the ratio is below the configured `threshold` (and, optionally, held for at least `min_duration` seconds), 0 otherwise, NaN where the hand was not detected.
+
+The default threshold is a starting point and should be tuned against annotated data.
 
 
 ## Audio Transcription

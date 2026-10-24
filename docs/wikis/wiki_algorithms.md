@@ -126,6 +126,10 @@ Two algorithms support tracking blink/closure states and dynamics from facial la
 - **`eye_closure_ear`** (`eye_closure_score` component): Computes the Eye Aspect Ratio (EAR) as the ratio of eye height to eye width, indicating closure degree. [Soukupová and Čech, 2016](https://vision.fe.uni-lj.si/cvww2016/proceedings/papers/05.pdf)
 - **`eye_closure_threshold`** (`eye_closed_state` component): Categorizes the eye state (closed/open) via a threshold applied to the closure score, with optional duration-based temporal filtering. It outputs per-camera (`per_camera_state`) and global (`global_state`) eye closed states for `"left_eye"`, `"right_eye"`, and `"both_eyes"`.
 
+## Hand Closure
+
+- **`hand_closure`** (`hand_closure` component): Computes a finger extension ratio per hand from 2D hand keypoints (fingertip-to-wrist over knuckle-to-wrist distance, averaged over four fingers) and marks a fist where it falls below a threshold, with optional minimum-duration filtering.
+
 
 ## WhisperX (Audio Transcription & Speaker Diarization)
 
