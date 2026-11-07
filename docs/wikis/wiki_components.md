@@ -268,10 +268,10 @@ Calculated by comparing the vertical distance between the eyelid keypoints to th
 ## Hand Closure
 
 Detects closed hands (fists) from 2D hand keypoints, such as those produced by `rtmpose_l_wholebody`. The **hand_closure** component stores two arrays under `<output_folder>/hand_closure/<algorithm_name>.npz`, each with `"left_hand"` and `"right_hand"` columns per subject, camera and frame:
-- **`extension_ratio`**: For the index, middle, ring and little fingers, the distance from fingertip to wrist divided by the distance from knuckle to wrist, averaged over the fingers. An open hand gives roughly 1.7 to 2.0, a fist about 1.0. The ratio does not depend on the subject's distance to the camera. The thumb is not used.
-- **`fist_state`**: 1 where the ratio is below the configured `threshold` (and, optionally, held for at least `min_duration` seconds), 0 otherwise, NaN where the hand was not detected.
+- **`extension_ratio`**: For the index, middle, ring and little fingers, the distance from fingertip to wrist divided by the distance from knuckle to wrist, averaged over the fingers. An open hand gives roughly 1.7 to 2.0, a fist about 1.0. The ratio does not depend on the subject's distance to the camera. The thumb is not used. NaN when fewer than `min_fingers` fingers are seen (default 4: averaging only the seen fingers would read a pointing hand that loses its index tip as a fist).
+- **`fist_state`**: 1 where the ratio is below the configured `threshold` (and, optionally, held for at least `min_duration` seconds), 0 otherwise, NaN where the hand was not detected. Gaps of at most `max_gap_duration` seconds between two equal states are filled first, so a brief tracking dropout does not split a fist.
 
-The default threshold is a starting point and should be tuned against annotated data.
+The default threshold is a starting point and should be tuned against annotated data. Known limitation: the ratio is computed in 2D, so a hand pointing toward the camera foreshortens the knuckle distance and makes the ratio unreliable.
 
 
 ## Audio Transcription

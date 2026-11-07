@@ -26,8 +26,10 @@ class HandClosure(BaseFeature):
     Detects a closed hand (fist) from upstream 2D hand keypoints.
 
     For each hand it computes a finger extension ratio (see utils.calculate_extension_ratio)
-    and marks a fist where the ratio falls below `threshold`. With min_duration set, only fists
-    held at least that long are kept, which filters out brief grasping or tracking noise.
+    and marks a fist where the ratio falls below `threshold`. Gaps of at most max_gap_duration
+    between two equal states are filled, so a one-frame dropout does not split a fist. With
+    min_duration set, only fists held at least that long are kept, which filters out brief
+    grasping or tracking noise.
 
     The default threshold is a starting guess. It should be tuned against annotated sessions
     with the evaluation module before the state is trusted.
@@ -51,6 +53,8 @@ class HandClosure(BaseFeature):
         self.threshold = self.detector_config.threshold
         self.min_confidence = self.detector_config.min_confidence
         self.min_duration = self.detector_config.min_duration
+        self.min_fingers = self.detector_config.min_fingers
+        self.max_gap_duration = self.detector_config.max_gap_duration
 
         labels = self.loaded_inputs["hand_joints_2d"].axes.labels
         self.hand_indices = hand_utils.resolve_hand_indices(labels)
@@ -71,14 +75,25 @@ class HandClosure(BaseFeature):
         for side in hand_utils.HAND_SIDES:
             idx = self.hand_indices[side]
             side_coords, side_confidence = coords[:, :, :, idx, :], confidence[:, :, :, idx]
-            ratios.append(hand_utils.calculate_extension_ratio(side_coords, side_confidence, self.min_confidence))
+            ratios.append(
+                hand_utils.calculate_extension_ratio(
+                    side_coords, side_confidence, self.min_confidence, self.min_fingers
+                )
+            )
         extension_ratio = np.stack(ratios, axis=-1)
 
         # Float state so a missing hand stays NaN rather than collapsing into "open".
-        missing = np.isnan(extension_ratio)
         fist_state = np.where(extension_ratio < self.threshold, 1.0, 0.0)
+        fist_state[np.isnan(extension_ratio)] = np.nan
+
+        # Bridge brief dropouts (1, NaN, 1 -> 1, 1, 1) so they don't split a fist in two.
+        if self.max_gap_duration > 0.0:
+            fist_state = hand_utils.fill_short_gaps(fist_state, self.data.fps, self.max_gap_duration, axis=2)
+
+        # Duration filtering needs a clean 0/1 signal: treat the remaining gaps as open, then restore them.
+        missing = np.isnan(fist_state)
         if self.min_duration > 0.0:
-            fist_state = filter_duration(fist_state, self.data.fps, self.min_duration, axis=2)
+            fist_state = filter_duration(np.nan_to_num(fist_state, nan=0.0), self.data.fps, self.min_duration, axis=2)
         fist_state[missing] = np.nan
 
         out_axes = HAND_EXTENSION_RATIO.make_axes(axes.subjects, axes.cameras, axes.frames)

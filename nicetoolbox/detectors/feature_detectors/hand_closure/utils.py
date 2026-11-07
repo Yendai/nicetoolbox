@@ -47,7 +47,9 @@ def resolve_hand_indices(labels: list[str]) -> dict[str, list[int]]:
     return indices
 
 
-def calculate_extension_ratio(hand_coords: np.ndarray, confidence: np.ndarray, min_confidence: float) -> np.ndarray:
+def calculate_extension_ratio(
+    hand_coords: np.ndarray, confidence: np.ndarray, min_confidence: float, min_fingers: int = 1
+) -> np.ndarray:
     """
     Calculate how extended the four fingers of a hand are.
 
@@ -59,10 +61,14 @@ def calculate_extension_ratio(hand_coords: np.ndarray, confidence: np.ndarray, m
         hand_coords (np.ndarray): (..., 21, 2) point coordinates of one hand.
         confidence (np.ndarray): (..., 21) keypoint confidence scores.
         min_confidence (float): Points below this confidence count as missing.
+        min_fingers (int): How many of the four fingers must be seen (knuckle and tip) for the
+            hand to get a ratio. The mean of the seen fingers assumes the unseen ones look alike,
+            so a pointing hand that loses its index tip would read as a fist; requiring all four
+            fingers turns that frame into NaN instead.
 
     Returns:
-        np.ndarray: Mean ratio over the four fingers, shape hand_coords.shape[:-2]. NaN where
-        the wrist is missing, or every finger is missing its knuckle or tip.
+        np.ndarray: Mean ratio over the seen fingers, shape hand_coords.shape[:-2]. NaN where
+        the wrist is missing, or fewer than `min_fingers` fingers have both knuckle and tip.
     """
     coords = np.where((confidence >= min_confidence)[..., np.newaxis], hand_coords, np.nan)
     wrist = coords[..., WRIST, :]
@@ -76,10 +82,48 @@ def calculate_extension_ratio(hand_coords: np.ndarray, confidence: np.ndarray, m
         ratios.append(tip_dist / knuckle_dist)
 
     ratios = np.stack(ratios, axis=-1)
-    # Average the fingers that were seen; a frame with no usable finger stays NaN.
+    # Average the fingers that were seen; a frame with too few usable fingers stays NaN.
     counts = np.sum(~np.isnan(ratios), axis=-1)
     sums = np.nansum(ratios, axis=-1)
-    return np.where(counts > 0, sums / np.maximum(counts, 1), np.nan)
+    return np.where(counts >= max(min_fingers, 1), sums / np.maximum(counts, 1), np.nan)
+
+
+def fill_short_gaps(state: np.ndarray, fps: float, max_gap_duration: float, axis: int = -1) -> np.ndarray:
+    """
+    Fill short runs of NaN in a 0/1/NaN state array when both neighbours agree.
+
+    A brief tracking dropout inside a fist (1, NaN, 1) would otherwise split one long fist into
+    two shorter ones, which the duration filter may then drop. A gap of at most
+    `max_gap_duration` seconds between two equal states takes that state. Gaps between
+    different states, longer gaps, and gaps touching the start or end stay NaN.
+
+    Args:
+        state (np.ndarray): Array of 0.0, 1.0 or NaN, any shape.
+        fps (float): Frames per second along `axis`.
+        max_gap_duration (float): Longest gap, in seconds, that may be filled.
+        axis (int): The frame axis.
+
+    Returns:
+        np.ndarray: A filled copy of `state`.
+    """
+    max_gap = int(np.floor(max_gap_duration * fps + 1e-9))
+    filled = np.moveaxis(state.copy(), axis, -1)
+    if max_gap < 1:
+        return np.moveaxis(filled, -1, axis)
+
+    rows = filled.reshape(-1, filled.shape[-1])
+    for row in rows:
+        missing = np.isnan(row)
+        if not missing.any():
+            continue
+        # Start and end (exclusive) of every NaN run in this row.
+        edges = np.diff(np.concatenate([[0], missing.astype(np.int8), [0]]))
+        for start, end in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+            if start == 0 or end == len(row) or end - start > max_gap:
+                continue
+            if row[start - 1] == row[end]:
+                row[start:end] = row[start - 1]
+    return np.moveaxis(rows.reshape(filled.shape), -1, axis)
 
 
 def plot_hand_closure(viz_folder, extension_ratio, fist_state, subjects_descr, camera_names, threshold) -> None:

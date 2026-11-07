@@ -527,5 +527,7 @@ visualize = true
 threshold = 1.2         # max finger extension ratio for a fist (open hand ~1.7-2.0, fist ~1.0); tune on annotated data
 min_confidence = 0.3    # hand keypoints below this confidence count as missing
 min_duration = 0.5      # seconds a fist must be held to count (0 = keep every frame)
+min_fingers = 4         # fingers (of 4) that must be seen; fewer gives NaN (4 stops a pointing hand that loses its index tip reading as a fist)
+max_gap_duration = 0.1  # seconds of missing hand to fill when both sides agree (1, NaN, 1 -> 1); 0 = off
 [algorithms.hand_closure.inputs]
 hand_joints_2d = { component = "hand_joints", algorithm = "rtmpose_l_wholebody", npz_key = "2d" }
