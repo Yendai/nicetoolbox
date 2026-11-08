@@ -1,0 +1,13 @@
+# Lightweight environment for the live loop (python -m nicetoolbox.live), separate from the
+# batch toolbox's pinned environment. Python 3.10 - 3.13.
+numpy
+opencv-python
+mediapipe>=0.10.14
+# needed to import the batch eye closure utilities
+matplotlib
+pydantic
+# Optional second backend (RTMW whole-body keypoints, same layout as rtmpose_l_wholebody).
+# For a GPU, install onnxruntime-gpu instead of onnxruntime.
+# rtmlib
+# onnxruntime
+pytest
