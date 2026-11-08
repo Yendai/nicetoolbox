@@ -490,3 +490,14 @@ class EyeClosureThresholdConfig(BaseAlgorithmConfig):
     camera_names: str | list[str]
     min_duration: float = 0.0
     max_duration: Optional[float] = None
+
+
+@detector_config("hand_closure")
+class HandClosureConfig(BaseAlgorithmConfig):
+    visualize: bool
+    camera_names: str | list[str]
+    threshold: float = 1.2  # max finger extension ratio for a fist
+    min_confidence: float = 0.3  # keypoints below this confidence count as missing
+    min_duration: float = 0.0  # seconds a fist must be held to count
+    min_fingers: int = Field(default=4, ge=1, le=4)  # fingers (of 4) that must be seen for a ratio
+    max_gap_duration: float = 0.0  # seconds of missing hand to bridge between two equal states
