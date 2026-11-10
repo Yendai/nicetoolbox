@@ -21,11 +21,13 @@ from ..utils.error_handling import manage_error_scope
 from ..utils.system import system_capability_check
 from . import config_handler as confh
 from .data import SequenceData
+from .feature_detectors.body_crossing.body_crossing import BodyCrossing
 from .feature_detectors.eye_closure_ear.eye_closure_ear import EyeClosureEar
 from .feature_detectors.eye_closure_threshold.eye_closure_threshold import EyeClosureThreshold
 from .feature_detectors.gaze_interaction.gaze_distance import GazeDistance2D, GazeDistance3D
 from .feature_detectors.gaze_multiview.gaze_fusion import GazeFusion
 from .feature_detectors.hand_closure.hand_closure import HandClosure
+from .feature_detectors.hand_fidgeting.hand_fidgeting import HandFidgeting
 from .feature_detectors.kinematics.velocity_body import VelocityBody2D, VelocityBody3D
 from .feature_detectors.proximity.body_distance import BodyDistance2D, BodyDistance3D
 from .in_out import SequenceIO
@@ -63,6 +65,8 @@ DETECTOR_CLASSES: set[BaseDetector] = {
     EyeClosureEar,
     EyeClosureThreshold,
     HandClosure,
+    BodyCrossing,
+    HandFidgeting,
 }
 ALL_DETECTORS = {cls.algorithm_type: cls for cls in DETECTOR_CLASSES}
 
