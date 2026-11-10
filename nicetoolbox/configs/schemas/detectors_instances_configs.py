@@ -501,3 +501,29 @@ class HandClosureConfig(BaseAlgorithmConfig):
     min_duration: float = 0.0  # seconds a fist must be held to count
     min_fingers: int = Field(default=4, ge=1, le=4)  # fingers (of 4) that must be seen for a ratio
     max_gap_duration: float = 0.0  # seconds of missing hand to bridge between two equal states
+
+
+# Defaults live in configs/detectors_config.toml only, so the two can't drift apart.
+@detector_config("body_crossing")
+class BodyCrossingConfig(BaseAlgorithmConfig):
+    visualize: bool
+    camera_names: str | list[str]
+    margin: float  # crossing score (shoulder widths) above which limbs count as crossed
+    min_confidence: float  # keypoints below this confidence count as missing
+    min_width_ratio: float = Field(ge=0.0)  # shoulder width / torso length below which a frame is NaN
+    min_duration: float = Field(ge=0.0)  # seconds a crossing must be held to count
+    max_gap_duration: float = Field(ge=0.0)  # seconds of missing limbs to bridge between two equal states
+
+
+@detector_config("hand_fidgeting")
+class HandFidgetingConfig(BaseAlgorithmConfig):
+    visualize: bool
+    camera_names: str | list[str]
+    threshold: float  # windowed finger motion (hand lengths/s) from which a hand is fidgeting
+    max_hand_speed: float = Field(ge=0.0)  # windowed wrist motion (hand lengths/s) above which it is not; 0 = off
+    window_duration: float = Field(gt=0.0)  # seconds of trailing window the motion is averaged over
+    smooth_duration: float = Field(ge=0.0)  # seconds of moving average on keypoints against jitter
+    min_confidence: float  # keypoints below this confidence count as missing
+    min_points: int = Field(ge=1, le=20)  # finger points (of 20) that must be seen for a finger speed
+    min_duration: float = Field(ge=0.0)  # seconds fidgeting must last to count
+    max_gap_duration: float = Field(ge=0.0)  # seconds of missing hand to bridge between two equal states
