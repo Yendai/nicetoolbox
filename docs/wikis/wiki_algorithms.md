@@ -131,6 +131,15 @@ Two algorithms support tracking blink/closure states and dynamics from facial la
 - **`hand_closure`** (`hand_closure` component): Computes a finger extension ratio per hand from 2D hand keypoints (fingertip-to-wrist over knuckle-to-wrist distance, averaged over four fingers) and marks a fist where it falls below a threshold, with optional minimum-duration filtering.
 
 
+## Body Crossing
+
+- **`body_crossing`** (`body_crossing` component): Measures, along the shoulder line, how far the left and right wrists (arms) and knees or ankles (legs) have swapped sides across the body, in shoulder widths, and marks the limbs crossed where it is above a margin, with gap filling and minimum-duration filtering.
+
+## Hand Fidgeting
+
+- **`hand_fidgeting`** (`hand_fidgeting` component): Measures how fast the finger keypoints move relative to the wrist, in hand lengths per second, averaged over a trailing window, and marks a hand fidgeting where that motion is high while the wrist itself stays roughly in place, with gap filling and minimum-duration filtering.
+
+
 ## WhisperX (Audio Transcription & Speaker Diarization)
 
 ```{warning}

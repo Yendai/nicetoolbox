@@ -531,3 +531,40 @@ min_fingers = 4         # fingers (of 4) that must be seen; fewer gives NaN (4 s
 max_gap_duration = 0.1  # seconds of missing hand to fill when both sides agree (1, NaN, 1 -> 1); 0 = off
 [algorithms.hand_closure.inputs]
 hand_joints_2d = { component = "hand_joints", algorithm = "rtmpose_l_wholebody", npz_key = "2d" }
+
+# ======================================================================
+#                      Arm and Leg Crossing (2D)
+# ======================================================================
+
+# detects crossed arms (wrists) and crossed legs (knees or ankles) from 2d body keypoints
+[algorithms.body_crossing]
+algorithm_type = "body_crossing"
+camera_names = ["view_left", "view_right"]
+visualize = true
+margin = 0.1             # crossing score (shoulder widths) above which limbs count as crossed (uncrossed ~ -1, folded arms ~ +0.5 to +1); tune on annotated data
+min_confidence = 0.3     # body keypoints below this confidence count as missing
+min_width_ratio = 0.35   # shoulder width / torso length below which the person is too side-on to judge (frontal ~0.8); 0 = off
+min_duration = 2.0       # seconds a crossing must be held to count (passing a hand across the body should not)
+max_gap_duration = 0.5   # seconds of missing limbs to fill when both sides agree (1, NaN, 1 -> 1); 0 = off
+[algorithms.body_crossing.inputs]
+body_joints_2d = { component = "body_joints", algorithm = "rtmpose_l_wholebody", npz_key = "2d" }
+
+# ======================================================================
+#                    Hand and Finger Fidgeting (2D)
+# ======================================================================
+
+# detects sustained small hand and finger movements from 2d hand keypoints
+[algorithms.hand_fidgeting]
+algorithm_type = "hand_fidgeting"
+camera_names = ["view_left", "view_right"]
+visualize = true
+threshold = 0.5          # windowed finger motion relative to the wrist (hand lengths/s) from which a hand is fidgeting; tune on annotated data (still hands set the floor)
+max_hand_speed = 2.0     # windowed wrist motion (hand lengths/s) above which it counts as gesturing, not fidgeting; 0 = off
+window_duration = 2.0    # seconds of trailing window the motion is averaged over
+smooth_duration = 0.2    # seconds of moving average on the keypoints against tracking jitter; 0 = off
+min_confidence = 0.3     # hand keypoints below this confidence count as missing
+min_points = 15          # finger points (of 20) that must be seen in two consecutive frames for a finger speed
+min_duration = 1.0       # seconds fidgeting must last to count (0 = keep every frame)
+max_gap_duration = 0.2   # seconds of missing hand to fill when both sides agree (1, NaN, 1 -> 1); 0 = off
+[algorithms.hand_fidgeting.inputs]
+hand_joints_2d = { component = "hand_joints", algorithm = "rtmpose_l_wholebody", npz_key = "2d" }

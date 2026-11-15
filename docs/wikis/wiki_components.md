@@ -37,6 +37,8 @@ Per component, each `<algorithm>.npz` file contains several numpy arrays plus a 
 | eye_closure_score | score |
 | eye_closed_state | per_camera_state, global_state |
 | hand_closure | extension_ratio, fist_state |
+| body_crossing | crossing_score, crossing_state |
+| hand_fidgeting | fidget_score, hand_speed, fidget_state |
 
 All these numpy arrays share a common structure: the first 3 dimensions contain the subjects, cameras, and frames, the remaining dimensions vary with the respective entity.
 
@@ -272,6 +274,24 @@ Detects closed hands (fists) from 2D hand keypoints, such as those produced by `
 - **`fist_state`**: 1 where the ratio is below the configured `threshold` (and, optionally, held for at least `min_duration` seconds), 0 otherwise, NaN where the hand was not detected. Gaps of at most `max_gap_duration` seconds between two equal states are filled first, so a brief tracking dropout does not split a fist.
 
 The default threshold is a starting point and should be tuned against annotated data. Known limitation: the ratio is computed in 2D, so a hand pointing toward the camera foreshortens the knuckle distance and makes the ratio unreliable.
+
+
+## Body Crossing
+
+Detects crossed arms and crossed legs from 2D body keypoints, such as those produced by `rtmpose_l_wholebody`. The **body_crossing** component stores two arrays under `<output_folder>/body_crossing/<algorithm_name>.npz`, each with `"arms"` and `"legs"` columns per subject, camera and frame:
+- **`crossing_score`**: How far the right point of a left/right pair lies to the left of the left point, measured along the line from the right to the left shoulder and divided by the shoulder width. Arms use the wrists; legs use the larger of the knee and the ankle score, which covers both a knee crossed over the other knee and crossed ankles. Uncrossed limbs score below 0 (wrists resting on the thighs about -1), folded arms about +0.5 to +1. The score does not depend on the subject's distance to the camera or on a tilted body. NaN where the points were not seen, or where the person is turned too far sideways (shoulder width below `min_width_ratio` times the torso length).
+- **`crossing_state`**: 1 where the score is above `margin` (and, optionally, held for at least `min_duration` seconds), 0 otherwise, NaN where the limbs were not seen. Gaps of at most `max_gap_duration` seconds between two equal states are filled first.
+
+The default margin and durations are starting points and should be tuned against annotated data. Known limitations: the score is computed in 2D from one camera, and pose models sometimes swap the left and right labels of limbs that cross, which reads as uncrossed.
+
+## Hand Fidgeting
+
+Detects sustained small hand and finger movements from 2D hand keypoints, such as those produced by `rtmpose_l_wholebody`. The **hand_fidgeting** component stores three arrays under `<output_folder>/hand_fidgeting/<algorithm_name>.npz`, each with `"left_hand"` and `"right_hand"` columns per subject, camera and frame. Keypoints are divided by the hand's median size over the recording (wrist to middle knuckle, one "hand length") and smoothed over `smooth_duration` seconds against tracking jitter before speeds are taken:
+- **`fidget_score`**: The mean speed of the 20 finger points relative to the wrist, in hand lengths per second, averaged over a trailing window of `window_duration` seconds. Moving the whole hand without moving the fingers gives 0.
+- **`hand_speed`**: The speed of the wrist itself over the same window. It is high when the subject gestures or reaches.
+- **`fidget_state`**: 1 where `fidget_score` is at least `threshold` while `hand_speed` is at most `max_hand_speed` (and, optionally, lasting at least `min_duration` seconds), 0 otherwise, NaN where the hand was not seen. Gaps of at most `max_gap_duration` seconds between two equal states are filled first.
+
+The trailing window means the value at a frame only depends on the past, as it would in a live loop. The default thresholds are starting points: still hands set the noise floor for `threshold`, and both should be tuned against annotated data.
 
 
 ## Audio Transcription
