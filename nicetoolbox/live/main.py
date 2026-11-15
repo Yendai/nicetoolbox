@@ -1,10 +1,11 @@
 """
-Live loop: camera or video -> keypoints -> eye / hand closure -> cues, with per-frame latency.
+Live loop: camera or video -> keypoints -> feature detectors -> cues, with per-frame latency.
 
 Run from the repository root:
 
     python -m nicetoolbox.live --source 0                          # webcam 0, eye closure, MediaPipe on CPU
     python -m nicetoolbox.live --source 0 --detect eyes,hands      # eye and hand closure together
+    python -m nicetoolbox.live --source 0 --detect arms --show     # crossed arms, with an overlay window
     python -m nicetoolbox.live --source clip.mp4 --show            # video file with an overlay window
     python -m nicetoolbox.live --backend rtmlib --device cuda --source 0
 """
@@ -19,12 +20,24 @@ import numpy as np
 
 from ..detectors.feature_detectors.hand_closure.utils import FINGERS, HAND_SIDES, WRIST
 from .backends import EYE_SIDES, create_backend
+from .body_crossing import LiveBodyCrossing
 from .eye_closure import LiveEyeClosure
 from .hand_closure import LiveHandClosure
 from .latency import LatencyTracker
 from .sources import open_source
 
-DETECTORS = {"eyes": "faces", "hands": "hands"}  # --detect name -> backend part it needs
+# --detect name -> backend part it needs
+DETECTORS = {"eyes": "faces", "hands": "hands", "arms": "bodies", "legs": "bodies"}
+# Body points joined in the overlay for each limb pair of the crossing detector.
+CROSSING_LINES = {
+    "arms": (("left_shoulder", "left_wrist"), ("right_shoulder", "right_wrist"), ("left_shoulder", "right_shoulder")),
+    "legs": (
+        ("left_hip", "left_knee"),
+        ("left_knee", "left_ankle"),
+        ("right_hip", "right_knee"),
+        ("right_knee", "right_ankle"),
+    ),
+}
 
 
 def run(frames, backend, detectors, latency, on_event=None, on_frame=None, max_frames=None) -> None:
@@ -75,7 +88,7 @@ def print_event(event) -> None:
     )
 
 
-def make_overlay(face_roi=None):
+def make_overlay(face_roi=None, crossing_parts=()):
     """Return an on_frame callback that shows keypoints, scores and states in a window."""
     import cv2
 
@@ -115,6 +128,20 @@ def make_overlay(face_roi=None):
                 red if cue else green, 1,
             )  # fmt: skip
 
+        crossing = results.get("body_crossing")
+        for p, body in enumerate(observation.bodies if crossing else []):
+            for i, limb in enumerate(("arms", "legs")):
+                state, score = crossing["crossing_state"][p, i], crossing["crossing_score"][p, i]
+                if limb not in crossing_parts or np.isnan(score):
+                    continue
+                color = red if state == 1.0 else green
+                for a, b in CROSSING_LINES[limb]:
+                    if min(body.confidence[a], body.confidence[b]) > 0:
+                        cv2.line(image, tuple(body.coords[a].astype(int)), tuple(body.coords[b].astype(int)), color, 2)
+                anchor = body.coords["left_shoulder" if limb == "arms" else "left_hip"].astype(int) + [10, -10]
+                label = f"{limb} {score:+.2f}{' CROSSED' if state == 1.0 else ''}"
+                cv2.putText(image, label, tuple(anchor), font, 0.6, color, 2)
+
         cv2.imshow("nicetoolbox live", image)
         return (cv2.waitKey(1) & 0xFF) != ord("q")
 
@@ -122,9 +149,9 @@ def make_overlay(face_roi=None):
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="Run eye / hand closure detectors live and report per-frame latency.")
+    parser = argparse.ArgumentParser(description="Run feature detectors live and report per-frame latency.")
     parser.add_argument("--source", default="0", help="Webcam index (e.g. 0) or a video file path.")
-    parser.add_argument("--detect", default="eyes", help="Comma-separated detectors: eyes, hands.")
+    parser.add_argument("--detect", default="eyes", help="Comma-separated detectors: eyes, hands, arms, legs.")
     parser.add_argument("--backend", choices=["mediapipe", "rtmlib"], default="mediapipe")
     parser.add_argument(
         "--device",
@@ -148,6 +175,17 @@ def parse_args(argv=None):
     parser.add_argument("--eye-min-duration", type=float, default=1.0, help="Seconds both eyes stay closed per cue.")
     parser.add_argument("--hand-threshold", type=float, default=1.2, help="Max finger extension ratio for a fist.")
     parser.add_argument("--hand-min-duration", type=float, default=0.5, help="Seconds a fist is held per cue.")
+    parser.add_argument(
+        "--crossing-margin",
+        type=float,
+        default=0.1,
+        help="Score (shoulder widths) above which limbs are crossed.",
+    )
+    parser.add_argument("--crossing-min-duration", type=float, default=2.0, help="Seconds limbs stay crossed per cue.")
+    parser.add_argument(
+        "--crossing-max-gap", type=float, default=0.5, help="Seconds limbs may go unseen without ending a crossing."
+    )
+    parser.add_argument("--pose-model", default="lite", choices=["lite", "full", "heavy"], help="MediaPipe pose size.")
     parser.add_argument("--min-confidence", type=float, default=0.3)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--no-realtime", action="store_true", help="Process a video file as fast as possible.")
@@ -170,10 +208,15 @@ def parse_args(argv=None):
 def main(argv=None) -> dict:
     args = parse_args(argv)
 
-    parts = tuple(DETECTORS[d] for d in args.detect)
+    parts = tuple(dict.fromkeys(DETECTORS[d] for d in args.detect))
     if args.backend == "mediapipe":
         backend = create_backend(
-            "mediapipe", parts=parts, mirrored=args.mirrored, device=args.device or "cpu", face_roi=args.face_roi
+            "mediapipe",
+            parts=parts,
+            mirrored=args.mirrored,
+            device=args.device or "cpu",
+            face_roi=args.face_roi,
+            pose_variant=args.pose_model,
         )
     else:
         backend = create_backend("rtmlib", parts=parts, mode=args.rtmlib_mode, device=args.device or "cuda")
@@ -184,6 +227,18 @@ def main(argv=None) -> dict:
         )
     if "hands" in args.detect:
         detectors.append(LiveHandClosure(args.hand_threshold, args.min_confidence, args.hand_min_duration))
+
+    crossing_parts = tuple(d for d in args.detect if d in ("arms", "legs"))
+    if crossing_parts:
+        detectors.append(
+            LiveBodyCrossing(
+                crossing_parts,
+                args.crossing_margin,
+                args.min_confidence,
+                min_duration=args.crossing_min_duration,
+                max_gap_duration=args.crossing_max_gap,
+            )
+        )
 
     cue_file = None
     csv_path = None
@@ -199,7 +254,7 @@ def main(argv=None) -> dict:
             cue_file.write(json.dumps(dataclasses.asdict(event)) + "\n")
             cue_file.flush()
 
-    overlay = make_overlay(args.face_roi) if args.show else None
+    overlay = make_overlay(args.face_roi, crossing_parts) if args.show else None
     last_report = [time.perf_counter()]
 
     def on_frame(frame, observation, results):

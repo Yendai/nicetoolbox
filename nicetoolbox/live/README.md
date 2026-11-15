@@ -1,7 +1,7 @@
 # Live loop (proof of concept)
 
 Runs feature detectors frame by frame on a webcam or video, prints a cue when a behaviour starts
-and stops, and measures how long each frame takes. Two detectors so far, each reusing the batch
+and stops, and measures how long each frame takes. Three detectors so far, each reusing the batch
 toolbox's own scoring function:
 
 - **Eye closure** (default): the batch `eye_closure_ear` Eye Aspect Ratio on six points per eye.
@@ -9,8 +9,11 @@ toolbox's own scoring function:
   ignores ordinary blinks.
 - **Hand closure**: the batch `hand_closure` finger extension ratio. A cue starts when a fist has
   been held for `--hand-min-duration` (default 0.5 s).
+- **Arm and leg crossing** (`--detect arms`, `legs`, or both): the batch `body_crossing` score, which
+  turns positive when the wrists (arms) or the knees or ankles (legs) swap sides across the body.
+  A cue starts when the limbs have stayed crossed for `--crossing-min-duration` (default 2 s).
 
-The loop flags observable behaviour only (eyes or a hand held closed). It does not infer emotions.
+The loop flags observable behaviour only (eyes or a hand held closed, limbs held crossed). It does not infer emotions.
 
 ## Setup
 
@@ -30,13 +33,14 @@ From the repository root:
 ```bash
 envs/live/bin/python -m nicetoolbox.live --source 0 --show                     # webcam 0, eyes, overlay (q quits)
 envs/live/bin/python -m nicetoolbox.live --source 0 --detect eyes,hands        # both detectors
+envs/live/bin/python -m nicetoolbox.live --source 0 --detect arms --show       # crossed arms, overlay
 envs/live/bin/python -m nicetoolbox.live --source clip.mp4 --out-dir out       # video, writes logs
 envs/live/bin/python -m nicetoolbox.live --source 0 --face-roi 400,100,500,500 # wide room camera
 envs/live/bin/python -m nicetoolbox.live --backend rtmlib --device cuda --source 0
 ```
 
-MediaPipe model files (`face_landmarker.task` about 4 MB, `hand_landmarker.task` about 8 MB) are
-downloaded to `assets/live/` on first run. See `--help` for all options.
+MediaPipe model files (`face_landmarker.task` about 4 MB, `hand_landmarker.task` about 8 MB,
+`pose_landmarker_lite.task` about 6 MB) are downloaded to `assets/live/` on first run. See `--help` for all options.
 
 With `--out-dir` the loop writes `latency.csv` (one row per frame), `cues.jsonl` (one line per
 cue start or end) and `summary.json`.
@@ -47,6 +51,23 @@ MediaPipe's face detector is a short-range model. On the toolbox's seated-subjec
 the face when the face filled about 7% of the frame width and found it at 16%. With a wide room
 camera, either point a second camera at the client's face, or pass `--face-roi x,y,width,height`
 around where the client sits so the face model only looks there (hands still use the whole frame).
+
+## Arm crossing
+
+Stand or sit facing the camera with both shoulders and both wrists in view. With `--show`, the
+overlay prints the arm score next to the left shoulder: about -1 or lower with the arms at the
+sides, above 0 once the wrists have swapped sides, and `CROSSED` once that has lasted
+`--crossing-min-duration`. Things to know:
+
+- A webcam preview that looks like a mirror may still deliver unmirrored frames. Crossing does
+  not depend on it: swapping left and right swaps both the shoulders and the wrists, and the
+  score stays the same.
+- Folded arms often hide a wrist under the other arm. The pose model then lowers that point's
+  confidence and the frame is unknown. `--crossing-max-gap` (default 0.5 s) lets a crossing
+  survive such dropouts; a frame where the arms are clearly uncrossed still ends it at once. If
+  the cue keeps dropping, try `--min-confidence 0.1` or `--pose-model full`.
+- A person turned side-on (shoulders much narrower than the torso is long) is unknown.
+- The margin (`--crossing-margin`, default 0.1) and durations are starting guesses.
 
 ## Eye threshold
 
@@ -78,12 +99,14 @@ Measured on a 4-core cloud CPU (no GPU), 30 fps clips made from the toolbox's do
 | Eyes, face filling the frame (640x640) | 11.7 ms | 14.1 ms |
 | Eyes, room view (720x960) with `--face-roi` | 11.7 ms | 14.0 ms |
 | Eyes and hands, room view with `--face-roi` | 32.2 ms | 38.5 ms |
+| Arms, room view (720x960), `--pose-model lite` | 21.0 ms | 24.3 ms |
+| Arms, room view (720x960), `--pose-model full` | 24.5 ms | 29.9 ms |
 
 ## Backends
 
 | Backend | Model | Hardware | Notes |
 |---|---|---|---|
-| `mediapipe` (default) | MediaPipe Face Landmarker (478 points) and Hand Landmarker, Apache-2.0 | CPU real time | Dedicated face and hand models at high resolution, tracked between frames. Short-range face detector (see above). |
+| `mediapipe` (default) | MediaPipe Face Landmarker (478 points), Hand Landmarker and Pose Landmarker (33 body points), Apache-2.0 | CPU real time | Dedicated face, hand and body models, tracked between frames. Short-range face detector (see above). |
 | `rtmlib` | RTMW whole-body via rtmlib + ONNX Runtime, Apache-2.0 | GPU (`onnxruntime-gpu`) | One model for body, face (68 points) and hands, for several people. Same 133-point layout as the batch `rtmpose_l_wholebody`, so live and batch features match. Eye points are coarser when people are far away. |
 
 ## Differences from the batch detectors
@@ -91,4 +114,6 @@ Measured on a 4-core cloud CPU (no GPU), 30 fps clips made from the toolbox's do
 The batch detectors keep runs that last at least their min duration, judged after the fact, so a
 kept run is marked from its first frame. Live, the state turns on once the behaviour has already
 lasted that long, and turns off on the first frame it stops or is not seen. A face or hand that
-drops out of tracking for one frame therefore ends the cue, as it ends a run in the batch detectors.
+drops out of tracking for one frame therefore ends the cue. The crossing detector is the
+exception: like the batch detector's gap filling, it holds a crossing through up to
+`--crossing-max-gap` seconds of unseen limbs.
