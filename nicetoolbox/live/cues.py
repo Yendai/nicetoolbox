@@ -38,6 +38,7 @@ class _Run:
     def __init__(self):
         self.start = None  # stream time of the first frame in the current run
         self.active = False  # True once the run has lasted min_duration and a cue started
+        self.last_seen = None  # stream time of the last frame the behaviour was seen
 
 
 class SustainedCue:
@@ -47,11 +48,16 @@ class SustainedCue:
     Args:
         behaviour (str): Name put on the events.
         min_duration (float): Seconds the signal must hold before a cue starts (0 = immediately).
+        max_gap_duration (float): Seconds the signal may be unknown in the middle of a run without
+            ending it (0 = any unknown frame ends the run). The live counterpart of the batch
+            detectors' gap filling: a brief tracking dropout does not restart the count or end
+            the cue. A frame where the behaviour is clearly absent still ends the run at once.
     """
 
-    def __init__(self, behaviour: str, min_duration: float):
+    def __init__(self, behaviour: str, min_duration: float, max_gap_duration: float = 0.0):
         self.behaviour = behaviour
         self.min_duration = min_duration
+        self.max_gap_duration = max_gap_duration
         self._runs: dict[tuple[int, str], _Run] = {}
         self._seen: set = set()
 
@@ -61,8 +67,8 @@ class SustainedCue:
 
         Args:
             present (float): 1 if the behaviour is seen this frame, 0 if not, NaN if unknown
-                (e.g. the hand or face was not detected). Unknown ends a run, as in the batch
-                detectors.
+                (e.g. the hand or face was not detected). Unknown ends a run once it has lasted
+                longer than max_gap_duration.
             events (list): Start/end CueEvents are appended here.
 
         Returns:
@@ -71,6 +77,9 @@ class SustainedCue:
         key = (person, part)
         self._seen.add(key)
         run = self._runs.setdefault(key, _Run())
+        if np.isnan(present) and run.start is not None and timestamp - run.last_seen <= self.max_gap_duration + 1e-6:
+            # A short dropout inside a run: hold the run and the cue, but report the frame as unknown.
+            return np.nan
         if np.isnan(present) or present == 0:
             if run.active:
                 events.append(CueEvent(self.behaviour, person, part, "end", timestamp, frame, run.start))
@@ -79,6 +88,7 @@ class SustainedCue:
 
         if run.start is None:
             run.start = timestamp
+        run.last_seen = timestamp
         # The tolerance keeps float timestamps (e.g. 0.7 - 0.2) from missing the boundary.
         if not run.active and timestamp - run.start >= self.min_duration - 1e-6:
             run.active = True
