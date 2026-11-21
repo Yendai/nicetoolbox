@@ -34,6 +34,7 @@ From the repository root:
 envs/live/bin/python -m nicetoolbox.live --source 0 --show                     # webcam 0, eyes, overlay (q quits)
 envs/live/bin/python -m nicetoolbox.live --source 0 --detect eyes,hands        # both detectors
 envs/live/bin/python -m nicetoolbox.live --source 0 --detect arms --show       # crossed arms, overlay
+envs/live/bin/python -m nicetoolbox.live --source 0 --detect arms --ui         # web page + wristband
 envs/live/bin/python -m nicetoolbox.live --source clip.mp4 --out-dir out       # video, writes logs
 envs/live/bin/python -m nicetoolbox.live --source 0 --face-roi 400,100,500,500 # wide room camera
 envs/live/bin/python -m nicetoolbox.live --backend rtmlib --device cuda --source 0
@@ -78,6 +79,48 @@ closed. By default each eye is judged against its own recent past instead: close
 unknown for the first second, while that history builds up. Pass `--eye-relative 0` to use the
 fixed `--eye-threshold` (default 0.1, as in the batch config). If someone keeps their eyes closed
 for most of a minute, the baseline drifts down with them and the cue ends; tune on annotated clips.
+
+## Web page and wristband (`--ui`)
+
+```bash
+envs/live/bin/python -m nicetoolbox.live --source 0 --detect arms --ui
+```
+
+This prints `Web page: http://127.0.0.1:8765/`. Open it in **Chrome or Edge** on the same computer.
+The page shows the camera with the overlay, whether the arms are crossed, frame rate and delay,
+and a log. **Connect band** pairs with the wristband over Bluetooth LE; after that every cue that
+has a band command is sent to the band, and **Test buzz**, **Test status motor** and **Send arms
+cue** let you check the band without crossing your arms.
+
+How the pieces talk:
+
+```
+camera -> Python live loop --(Server-Sent Events, 127.0.0.1)--> page in Chrome --(Web Bluetooth)--> XIAO nRF52840 -> motor
+```
+
+- Python only decides *which* command a cue maps to (`BAND_COMMANDS` in `ui.py`: arms crossed
+  start = `A`, end = `a`). It needs no Bluetooth library.
+- The page writes the command to the band's Nordic UART service (the standard "serial over
+  Bluetooth LE" service, so phone apps such as nRF Connect can also send test commands).
+- The band buzzes only when a cue **starts** (change-only). While connected the page sends a
+  heartbeat `H` every 10 s as long as frames are arriving; if the band hears nothing for 30 s, or
+  the page disappears without saying goodbye, it buzzes the status motor three times and turns its
+  LED red, so a stalled system is never silent.
+- The server listens on 127.0.0.1 only: the video shows clients and must not reach the network.
+
+Band firmware: [`band/band_receiver/band_receiver.ino`](band/band_receiver/band_receiver.ino)
+(Arduino IDE, board "Seeed XIAO nRF52840" from the non-mbed "Seeed nRF52 Boards" package). The
+same commands work from the Serial Monitor at 115200 baud, so the band can be tested before the
+Python side runs.
+
+| Command | Band does |
+|---|---|
+| `A` | Arms crossed cue started: two short buzzes on dot 1 (only if it was not already on) |
+| `a` | Arms cue ended: no buzz |
+| `T` / `S` | Test buzz on dot 1 / on the status motor |
+| `H` | Heartbeat; after the first one, 30 s of silence is a fault |
+| `X` | The page disconnects on purpose: no fault buzz |
+| `?` | Print state |
 
 ## What the latency numbers mean
 
