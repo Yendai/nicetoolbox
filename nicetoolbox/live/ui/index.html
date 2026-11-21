@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live cues</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1c2024; --muted: #5d6670; --line: #d9dde2;
+    --ok: #1f7a3a; --ok-bg: #e3f4e8; --cue: #b42318; --cue-bg: #fde8e6; --idle-bg: #eef0f3;
+    --accent: #2457c5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15181b; --panel: #1f2327; --text: #e8eaed; --muted: #9aa3ad; --line: #343a40;
+      --ok: #5fcf80; --ok-bg: #1d3325; --cue: #ff8a80; --cue-bg: #3d1f1c; --idle-bg: #2a2f34;
+      --accent: #7aa2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+  header { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  .pill { font-size: 13px; padding: 2px 10px; border-radius: 99px; background: var(--idle-bg); color: var(--muted); }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.bad { background: var(--cue-bg); color: var(--cue); }
+  main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: 16px; padding: 16px; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  section + section { margin-top: 16px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 10px; }
+  #video { width: 100%; max-height: 75vh; object-fit: contain; border-radius: 6px; background: #000; min-height: 200px; display: block; }
+  #cue { font-size: 26px; font-weight: 600; padding: 18px; border-radius: 8px; text-align: center; background: var(--idle-bg); }
+  #cue.on { background: var(--cue-bg); color: var(--cue); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button { font: inherit; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  label { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-variant-numeric: tabular-nums; }
+  #log { font: 12px/1.5 ui-monospace, monospace; max-height: 260px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+  #log li { border-bottom: 1px solid var(--line); padding: 3px 0; overflow-wrap: anywhere; }
+  .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Live cues</h1>
+  <span id="loopPill" class="pill">Live loop: connecting</span>
+  <span id="bandPill" class="pill">Band: not connected</span>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Camera</h2>
+      <img id="video" alt="Camera view with keypoints. Red lines mean the cue is on.">
+      <p class="note">Only this computer can open this page: the server listens on 127.0.0.1.</p>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>Arms</h2>
+      <div id="cue" role="status" aria-live="polite">Not crossed</div>
+    </section>
+    <section>
+      <h2>Wristband</h2>
+      <div class="row">
+        <button id="connect" class="primary">Connect band</button>
+        <button id="disconnect" disabled>Disconnect</button>
+      </div>
+      <div class="row">
+        <button id="testDot" disabled>Test buzz</button>
+        <button id="testStatus" disabled>Test status motor</button>
+        <button id="fakeCue" disabled>Send arms cue</button>
+      </div>
+      <label><input type="checkbox" id="forward" checked> Send cues to the band</label>
+      <p id="btNote" class="note"></p>
+    </section>
+    <section>
+      <h2>Live loop</h2>
+      <dl>
+        <dt>Frames per second</dt><dd id="fps">-</dd>
+        <dt>Delay per frame</dt><dd id="lat">-</dd>
+        <dt>People seen</dt><dd id="people">-</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Log</h2>
+      <ul id="log"></ul>
+    </section>
+  </div>
+</main>
+<script>
+// Nordic UART service, as BLEUart sets it up on the band.
+const NUS = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";  // we write commands here
+const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";  // the band answers here
+const BAND_NAME = "HapticBand";
+const HEARTBEAT_MS = 10000;   // the band faults after 30 s without a message
+
+const $ = (id) => document.getElementById(id);
+let device = null, rx = null, writeChain = Promise.resolve();
+let lastStatusAt = 0;
+const crossed = new Set();   // people whose arms-crossed cue is on
+
+function log(text) {
+  const li = document.createElement("li");
+  li.textContent = new Date().toLocaleTimeString() + "  " + text;
+  $("log").prepend(li);
+  while ($("log").children.length > 200) $("log").lastChild.remove();
+}
+
+function pill(el, text, kind) {
+  el.textContent = text;
+  el.className = "pill" + (kind ? " " + kind : "");
+}
+
+// ---- Live loop: cues and status from Python (Server-Sent Events) ----
+const events = new EventSource("/events");
+events.onopen = () => { pill($("loopPill"), "Live loop: running", "ok"); $("video").src = "/video.mjpg?" + Date.now(); };
+events.onerror = () => pill($("loopPill"), "Live loop: not reachable", "bad");
+events.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  if (msg.type === "status") {
+    lastStatusAt = Date.now();
+    $("fps").textContent = msg.fps.toFixed(1);
+    $("lat").textContent = msg.total_ms == null ? "-" : msg.total_ms.toFixed(0) + " ms";
+    $("people").textContent = msg.people;
+  } else if (msg.type === "cue") {
+    log(`cue ${msg.state} ${msg.behaviour} ${msg.part} person ${msg.person}` + (msg.command ? ` -> band "${msg.command}"` : ""));
+    if (msg.behaviour === "body_crossing" && msg.part === "arms") {
+      msg.state === "start" ? crossed.add(msg.person) : crossed.delete(msg.person);
+      showCue();
+    }
+    if (msg.command && $("forward").checked) send(msg.command);
+  } else if (msg.type === "bye") {
+    pill($("loopPill"), "Live loop: stopped", "bad");
+    log("live loop stopped");
+  }
+};
+
+function showCue() {
+  const on = crossed.size > 0;
+  $("cue").textContent = on ? "Arms crossed" : "Not crossed";
+  $("cue").className = on ? "on" : "";
+}
+
+// ---- Wristband over Web Bluetooth ----
+function setConnected(on) {
+  $("connect").disabled = on;
+  for (const id of ["disconnect", "testDot", "testStatus", "fakeCue"]) $(id).disabled = !on;
+  pill($("bandPill"), on ? "Band: connected" : "Band: not connected", on ? "ok" : "");
+}
+
+function send(command) {
+  if (!rx) return Promise.resolve();
+  const bytes = new TextEncoder().encode(command);
+  // One Bluetooth write at a time: overlapping writes fail with "GATT operation already in progress".
+  writeChain = writeChain
+    .then(() => (rx.writeValueWithoutResponse ? rx.writeValueWithoutResponse(bytes) : rx.writeValue(bytes)))
+    .catch((err) => log("band write failed: " + err.message));
+  return writeChain;
+}
+
+async function connect() {
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: BAND_NAME }, { services: [NUS] }],
+      optionalServices: [NUS],
+    });
+    device.addEventListener("gattserverdisconnected", () => {
+      rx = null;
+      setConnected(false);
+      log("band disconnected");
+    });
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(NUS);
+    rx = await service.getCharacteristic(NUS_RX);
+    const tx = await service.getCharacteristic(NUS_TX);
+    await tx.startNotifications();
+    tx.addEventListener("characteristicvaluechanged", (e) => {
+      const text = new TextDecoder().decode(e.target.value).trim();
+      if (text && text !== "ok H") log("band: " + text);
+    });
+    setConnected(true);
+    log("band connected: " + (device.name || "unnamed"));
+    if (crossed.size) send("A");   // bring a band that joined late up to date
+  } catch (err) {
+    if (err.name !== "NotFoundError") log("connect failed: " + err.message);  // NotFoundError = picker cancelled
+  }
+}
+
+async function disconnect() {
+  if (!device) return;
+  await send("X");   // tell the band this disconnect is on purpose, so it does not buzz a fault
+  device.gatt.disconnect();
+}
+
+// Heartbeat: only while the live loop is actually sending frames, so a stalled loop
+// (crash, laptop asleep) goes quiet and the band raises a fault on its own.
+setInterval(() => {
+  if (rx && Date.now() - lastStatusAt < 3000) send("H");
+}, HEARTBEAT_MS);
+
+$("connect").onclick = connect;
+$("disconnect").onclick = disconnect;
+$("testDot").onclick = () => send("T");
+$("testStatus").onclick = () => send("S");
+$("fakeCue").onclick = () => { send("a").then(() => send("A")); log("sent a test arms cue"); };
+
+if (!navigator.bluetooth) {
+  $("connect").disabled = true;
+  $("btNote").textContent = "This browser has no Web Bluetooth. Open this page in Chrome or Edge on this computer.";
+} else {
+  $("btNote").textContent = "Turn the band on (LED blinks blue), then Connect and pick " + BAND_NAME + ".";
+}
+</script>
+</body>
+</html>

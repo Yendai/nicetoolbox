@@ -6,6 +6,7 @@ Run from the repository root:
     python -m nicetoolbox.live --source 0                          # webcam 0, eye closure, MediaPipe on CPU
     python -m nicetoolbox.live --source 0 --detect eyes,hands      # eye and hand closure together
     python -m nicetoolbox.live --source 0 --detect arms --show     # crossed arms, with an overlay window
+    python -m nicetoolbox.live --source 0 --detect arms --ui       # crossed arms, web page + wristband
     python -m nicetoolbox.live --source clip.mp4 --show            # video file with an overlay window
     python -m nicetoolbox.live --backend rtmlib --device cuda --source 0
 """
@@ -88,14 +89,14 @@ def print_event(event) -> None:
     )
 
 
-def make_overlay(face_roi=None, crossing_parts=()):
-    """Return an on_frame callback that shows keypoints, scores and states in a window."""
+def make_drawer(face_roi=None, crossing_parts=()):
+    """Return draw(frame, observation, results) -> a copy of the image with keypoints, scores and states."""
     import cv2
 
     font = cv2.FONT_HERSHEY_SIMPLEX
     red, green = (0, 0, 255), (0, 200, 0)
 
-    def on_frame(frame, observation, results):
+    def draw(frame, observation, results):
         image = frame.image.copy()
         if face_roi:
             x, y, w, h = face_roi
@@ -141,9 +142,54 @@ def make_overlay(face_roi=None, crossing_parts=()):
                 anchor = body.coords["left_shoulder" if limb == "arms" else "left_hip"].astype(int) + [10, -10]
                 label = f"{limb} {score:+.2f}{' CROSSED' if state == 1.0 else ''}"
                 cv2.putText(image, label, tuple(anchor), font, 0.6, color, 2)
+        return image
 
-        cv2.imshow("nicetoolbox live", image)
+    return draw
+
+
+def make_overlay(face_roi=None, crossing_parts=()):
+    """Return an on_frame callback that shows keypoints, scores and states in a window."""
+    import cv2
+
+    draw = make_drawer(face_roi, crossing_parts)
+
+    def on_frame(frame, observation, results):
+        cv2.imshow("nicetoolbox live", draw(frame, observation, results))
         return (cv2.waitKey(1) & 0xFF) != ord("q")
+
+    return on_frame
+
+
+def make_ui_publisher(ui, latency, face_roi=None, crossing_parts=(), video_fps=15.0):
+    """
+    Return an on_frame callback that feeds the web page: the overlay as JPEG (only while a page
+    shows it, at most video_fps) and a status message about once a second.
+    """
+    import cv2
+
+    draw = make_drawer(face_roi, crossing_parts)
+    last = {"video": 0.0, "status": time.perf_counter(), "rows": 0}
+
+    def on_frame(frame, observation, results):
+        now = time.perf_counter()
+        if ui.wants_video and now - last["video"] >= 1.0 / video_fps:
+            last["video"] = now
+            ok, jpeg = cv2.imencode(".jpg", draw(frame, observation, results), [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if ok:
+                ui.publish_frame(jpeg.tobytes())
+        if now - last["status"] >= 1.0:
+            recent = latency.rows[last["rows"] :]
+            ui.publish(
+                {
+                    "type": "status",
+                    "fps": len(recent) / (now - last["status"]),
+                    "total_ms": float(np.median([r["total_ms"] for r in recent])) if recent else None,
+                    "stream_time": frame.timestamp,
+                    "people": len(observation.bodies or observation.faces or observation.hands or []),
+                }
+            )
+            last["status"], last["rows"] = now, len(latency.rows)
+        return True
 
     return on_frame
 
@@ -190,6 +236,12 @@ def parse_args(argv=None):
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--no-realtime", action="store_true", help="Process a video file as fast as possible.")
     parser.add_argument("--show", action="store_true", help="Show an overlay window (press q to quit).")
+    parser.add_argument(
+        "--ui",
+        action="store_true",
+        help="Serve a web page on 127.0.0.1 with the camera, cues and a wristband connection (Chrome or Edge).",
+    )
+    parser.add_argument("--ui-port", type=int, default=8765, help="Port for --ui.")
     parser.add_argument("--out-dir", default=None, help="Write latency.csv, cues.jsonl and summary.json here.")
     parser.add_argument("--report-every", type=float, default=5.0, help="Seconds between latency printouts (0 = off).")
     args = parser.parse_args(argv)
@@ -248,19 +300,31 @@ def main(argv=None) -> dict:
         cue_file = open(os.path.join(args.out_dir, "cues.jsonl"), "w")  # noqa: SIM115
     latency = LatencyTracker(csv_path)
 
+    ui = None
+    if args.ui:
+        from .ui import UiServer
+
+        ui = UiServer(args.ui_port)
+        print(f"Web page: {ui.url}  (open it in Chrome or Edge to see cues and connect the band)", flush=True)
+
     def on_event(event):
         print_event(event)
         if cue_file:
             cue_file.write(json.dumps(dataclasses.asdict(event)) + "\n")
             cue_file.flush()
+        if ui:
+            ui.publish_event(event)
 
     overlay = make_overlay(args.face_roi, crossing_parts) if args.show else None
+    publisher = make_ui_publisher(ui, latency, args.face_roi, crossing_parts) if ui else None
     last_report = [time.perf_counter()]
 
     def on_frame(frame, observation, results):
         if args.report_every and time.perf_counter() - last_report[0] >= args.report_every:
             last_report[0] = time.perf_counter()
             print(LatencyTracker.format(latency.summary()), flush=True)
+        if publisher:
+            publisher(frame, observation, results)
         return overlay(frame, observation, results) if overlay else True
 
     try:
@@ -280,6 +344,8 @@ def main(argv=None) -> dict:
         latency.close()
         if cue_file:
             cue_file.close()
+        if ui:
+            ui.close()
         if args.show:
             import cv2
 
